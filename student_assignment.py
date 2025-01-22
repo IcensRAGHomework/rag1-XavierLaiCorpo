@@ -1,16 +1,25 @@
 import json
 import traceback
+import requests
 
 from model_configurations import get_model_configuration
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import HumanMessage
-from langchain.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
+from langchain_core.tools import StructuredTool
+from langchain_openai import AzureChatOpenAI
+from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.output_parsers import ResponseSchema, StructuredOutputParser
+from langchain.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
+from langchain import hub
+from pydantic import BaseModel, Field
+from langchain_core.utils.json import parse_json_markdown
+
 
 gpt_chat_version = 'gpt-4o'
 gpt_config = get_model_configuration(gpt_chat_version)
+
+calenderific_api_key = 'XD2n3twlW3RxUJtTOBfqx2E4TdvXVMxd'
 
 def get_llm() -> AzureChatOpenAI:
     return AzureChatOpenAI(
@@ -38,7 +47,7 @@ def get_holiday_output(llm: BaseChatModel, input: str) -> str:
     chat_template = chat_template.partial(system_req=system_req)
     return llm.invoke(chat_template.format_messages(input=input)).content
 
-def get_formatted_output(llm: BaseChatModel, input: str) -> str:
+def get_formatted_output(llm: BaseChatModel, input: str, isList: bool) -> str:
     examples = [
         {"input": """```json
                     {
@@ -67,15 +76,47 @@ def get_formatted_output(llm: BaseChatModel, input: str) -> str:
     
     return llm.invoke(formatted_chat_template.format(input=input)).content
 
+def get_calenderific_api_url(year: int, month: int) -> str:
+    return f"https://calendarific.com/api/v2/holidays?&api_key={calenderific_api_key}&country=tw&year={year}&month={month}"
+
+def create_calender_tool():
+    def get_holidays(year: int, month: int) -> str:
+        response = requests.get(get_calenderific_api_url(year, month))
+        return response.json().get('response')
+
+    class GetHolidays(BaseModel):
+        year: int = Field(description="year")
+        month: int = Field(description="month")
+
+    return StructuredTool.from_function(
+        name="get_holidays",
+        description="Get holiday with provided year and month.",
+        func=get_holidays,
+        args_schema=GetHolidays,
+    )
+
+def get_calender_agent(llm: BaseChatModel) -> AgentExecutor:
+    prompt = hub.pull("hwchase17/openai-functions-agent")
+    tools = [create_calender_tool()]
+    agent = create_openai_functions_agent(llm, tools, prompt)
+    
+    return AgentExecutor(agent=agent, tools=tools)
+
 def generate_hw01(question: str) -> str:
     llm = get_llm();
-    holiday_response = get_holiday_output(llm, question)
-    formatted_response = get_formatted_output(llm, holiday_response)
+    response = get_holiday_output(llm, question)
+    response = get_formatted_output(llm, response, True)
 
-    return formatted_response
+    return response
     
 def generate_hw02(question):
-    pass
+    llm = get_llm()
+    agent_executor = get_calender_agent(llm)
+    response = agent_executor.invoke({"input": question}).get('output')
+    response = get_holiday_output(llm, response)
+    response = get_formatted_output(llm, response, True)
+    
+    return json.dumps(parse_json_markdown(response), ensure_ascii=False)
     
 def generate_hw03(question2, question3):
     pass
@@ -94,5 +135,5 @@ def demo(question):
     
     return response
 
-#question = "請回答台灣2024年10月的紀念日有哪些"
-#print(generate_hw01(question))
+question = "請回答台灣2024年10月的紀念日有哪些"
+print(generate_hw01(question))
