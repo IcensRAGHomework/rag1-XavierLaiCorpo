@@ -14,6 +14,8 @@ from langchain.prompts import ChatPromptTemplate, FewShotChatMessagePromptTempla
 from langchain import hub
 from pydantic import BaseModel, Field
 from langchain_core.utils.json import parse_json_markdown
+import base64
+from mimetypes import guess_type
 
 
 gpt_chat_version = 'gpt-4o'
@@ -102,6 +104,21 @@ def get_calender_agent(llm: BaseChatModel) -> AgentExecutor:
     
     return AgentExecutor(agent=agent, tools=tools)
 
+# Function to encode a local image into data URL 
+def local_image_to_data_url(image_path):
+    # Guess the MIME type of the image based on the file extension
+    mime_type, _ = guess_type(image_path)
+    if mime_type is None:
+        mime_type = 'application/octet-stream'  # Default MIME type if none is found
+
+    # Read and encode the image file
+    with open(image_path, "rb") as image_file:
+        base64_encoded_data = base64.b64encode(image_file.read()).decode('utf-8')
+
+    # Construct the data URL
+    return f"data:{mime_type};base64,{base64_encoded_data}"
+
+
 def generate_hw01(question: str) -> str:
     llm = get_llm();
     response = get_holiday_output(llm, question)
@@ -122,7 +139,24 @@ def generate_hw03(question2, question3):
     pass
     
 def generate_hw04(question):
-    pass
+    llm = get_llm()
+    image_path = 'baseball.png'
+    data_url = local_image_to_data_url(image_path)
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", "辨識圖片中的文字表格"),
+            ("user", [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                }
+            ]),
+            ("human", "{question}")
+        ]
+    )
+
+    return llm.invoke(prompt.format_messages(question=question)).content
     
 def demo(question):
     llm = get_llm()
@@ -135,5 +169,5 @@ def demo(question):
     
     return response
 
-question = "請回答台灣2024年10月的紀念日有哪些"
-print(generate_hw01(question))
+question = "中華台北的積分"
+print(generate_hw04(question))
